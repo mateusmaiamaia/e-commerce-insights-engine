@@ -1,0 +1,8 @@
+# Fase 2: MVP
+requests
+beautifulsoup4
+pandas
+textblob
+fastapi
+uvicorn[standard]
+SQLAlchemy
