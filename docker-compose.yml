@@ -1,0 +1,100 @@
+# docker-compose.yml (Versão 4 - com correção explícita de permissão de usuário)
+version: '3.8'
+
+services:
+  # Serviço do Banco de Dados para a NOSSA APLICAÇÃO
+  postgres_app_db:
+    image: postgres:15
+    container_name: postgres_app_db
+    restart: always
+    environment:
+      - POSTGRES_DB=insights_db
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres-app-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d insights_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Serviço do Banco de Dados para o AIRFLOW
+  postgres_airflow_db:
+    image: postgres:15
+    container_name: postgres_airflow_db
+    restart: always
+    environment:
+      - POSTGRES_DB=airflow_db
+      - POSTGRES_USER=airflow_user
+      - POSTGRES_PASSWORD=airflow_password
+    volumes:
+      - postgres-airflow-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow_user -d airflow_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Webserver do Airflow
+  airflow-webserver:
+    image: apache/airflow:2.9.2
+    container_name: airflow_webserver
+    restart: always
+    depends_on:
+      - postgres_airflow_db
+    env_file:
+      - .env
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow_user:airflow_password@postgres_airflow_db:5432/airflow_db
+      - AIRFLOW__WEBSERVER__SECRET_KEY=your_super_secret_key_change_me
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+    ports:
+      - "8080:8080"
+    user: "${AIRFLOW_UID}:0" # <-- MUDANÇA IMPORTANTE
+    command: >
+      bash -c "airflow db init && airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin || true; airflow webserver"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Scheduler do Airflow
+  airflow-scheduler:
+    image: apache/airflow:2.9.2
+    container_name: airflow_scheduler
+    restart: always
+    depends_on:
+      - airflow-webserver
+    env_file:
+      - .env
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow_user:airflow_password@postgres_airflow_db:5432/airflow_db
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+    user: "${AIRFLOW_UID}:0" # <-- MUDANÇA IMPORTANTE
+    command: scheduler
+
+  # Nosso Scraper
+  scraper:
+    build: .
+    container_name: python_scraper
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres_app_db:5432/insights_db
+    depends_on:
+      - postgres_app_db
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  postgres-app-data:
+  postgres-airflow-data:
